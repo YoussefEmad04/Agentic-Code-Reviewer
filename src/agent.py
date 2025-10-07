@@ -59,7 +59,19 @@ class CodeReviewAgent:
         workflow.add_node("handle_error", self._handle_error)
 
         # Edges
-        workflow.add_edge("ingest_code", "run_analyses")
+        # Route based on ingest result: if error is set, go to handle_error; else proceed
+        def _route_from_ingest(state: CodeReviewState) -> str:
+            return "error" if state.get("error") else "ok"
+
+        workflow.add_conditional_edges(
+            "ingest_code",
+            _route_from_ingest,
+            {
+                "error": "handle_error",
+                "ok": "run_analyses",
+            },
+        )
+
         workflow.add_edge("run_analyses", "synthesize_feedback")
         workflow.add_edge("handle_error", END)
 

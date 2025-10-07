@@ -13,3 +13,7 @@ streamlit>=1.30.0
 ruff>=0.5.1
 bandit>=1.7.9
 radon>=6.0.1
+
+
+pydantic>=2.5,<3
+pydantic-settings>=2.2,<3
