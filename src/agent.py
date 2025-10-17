@@ -41,10 +41,14 @@ class CodeReviewAgent:
         self.llm = ChatOpenAI(
             model=config.openai_model,
             api_key=config.openai_api_key,
-            temperature=0.2,
+            temperature=config.temperature,
             base_url=config.openai_base_url
         )
         self.workflow = self._build_workflow()
+        # Retry/backoff parameters from config
+        self._max_retries = max(0, int(getattr(config, "max_retries", 2)))
+        self._retry_backoff_s = float(getattr(config, "retry_backoff_s", 0.5))
+        self._request_timeout_s = int(getattr(config, "request_timeout_s", 60))
     
     def _build_workflow(self) -> Any:
         """Build the LangGraph workflow for code review.
@@ -141,7 +145,7 @@ Provide detailed, actionable feedback with code examples.
     async def _maintainability_analysis(self, state: CodeReviewState) -> CodeReviewState:
         """Analyze code for maintainability issues."""
         if not config.analyses["maintainability"].enabled:
-            return state
+            return {}
             
         system_prompt = f"""
 You are a senior software engineer reviewing {state['language']} code. Provide a DETAILED maintainability analysis.
@@ -171,7 +175,7 @@ Provide detailed, actionable feedback with code examples.
     async def _style_analysis(self, state: CodeReviewState) -> CodeReviewState:
         """Analyze code for style and formatting issues."""
         if not config.analyses["style"].enabled:
-            return state
+            return {}
             
         system_prompt = f"""
 You are a code style expert reviewing {state['language']} code. Provide a DETAILED style analysis.
@@ -210,7 +214,7 @@ Provide detailed, actionable feedback with code examples.
                 HumanMessage(content=state["code"])
             ]
             
-            response = await self.llm.ainvoke(messages)
+            response = await self._ainvoke_with_retries(messages)
             
             # Parse the response into structured format
             result = self._parse_analysis_response(response.content, analysis_type)
@@ -289,7 +293,7 @@ Be detailed, constructive, and actionable. Use code blocks for examples.
         ]
         
         try:
-            response = await self.llm.ainvoke(messages)
+            response = await self._ainvoke_with_retries(messages)
             content = getattr(response, "content", "") or ""
             
             # Clean up LLM response (remove wrapper tags if present)
@@ -313,6 +317,24 @@ Be detailed, constructive, and actionable. Use code blocks for examples.
                 "feedback": self._fallback_synthesis(state["analysis_results"]),
                 "status": "completed"
             }
+
+    async def _ainvoke_with_retries(self, messages: List[Any]):
+        """Invoke LLM with retries and timeout using config settings."""
+        last_err: Exception | None = None
+        for attempt in range(self._max_retries + 1):
+            try:
+                # enforce timeout per request
+                return await asyncio.wait_for(
+                    self.llm.ainvoke(messages),
+                    timeout=self._request_timeout_s,
+                )
+            except Exception as e:
+                last_err = e
+                # Backoff before retrying (except after final attempt)
+                if attempt < self._max_retries:
+                    await asyncio.sleep(self._retry_backoff_s * (2 ** attempt))
+                else:
+                    raise e
 
     def _clean_llm_response(self, content: str) -> str:
         """Clean up LLM response by removing wrapper tags and fixing formatting."""

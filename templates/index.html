@@ -15,7 +15,7 @@
                 <textarea
                     id="codeInput"
                     name="code"
-                    placeholder="Paste your Python code here for analysis..."
+                    placeholder="Paste code OR a public GitHub URL (repo or subfolder like https://github.com/owner/repo/tree/branch/path)"
                 ></textarea>
                 <button type="submit">🔍 Review Code</button>
             </form>
@@ -24,13 +24,31 @@
         <div id="results" class="results-section" style="display: none;">
             <h2>📊 Analysis Results</h2>
 
-            <div class="tabs">
-                <button class="tab-btn active" onclick="showTab('security')">🔒 Security</button>
-                <button class="tab-btn" onclick="showTab('maintainability')">🔧 Maintainability</button>
-                <button class="tab-btn" onclick="showTab('style')">🎨 Style</button>
+            <div id="repo-container" style="display:none; margin-bottom: 16px;">
+                <h3>📂 Repository Summary</h3>
+                <div id="repo-meta"></div>
+                <pre id="repo-tree" class="repo-tree"></pre>
+                <div id="repo-exts" class="repo-exts"></div>
+                <h3 style="margin-top:16px;">🗂️ Files</h3>
+                <ul id="repo-files" class="repo-files"></ul>
+                <div id="repo-feedback" class="repo-feedback"></div>
             </div>
 
-            <div id="security" class="tab-content active">
+            <div style="display:flex; justify-content: space-between; align-items:center; margin-top:8px;">
+                <div class="tabs">
+                    <button class="tab-btn active" onclick="showTab('aggregate')">🗂️ All Files</button>
+                    <button class="tab-btn" onclick="showTab('security')">🔒 Security</button>
+                    <button class="tab-btn" onclick="showTab('maintainability')">🔧 Maintainability</button>
+                    <button class="tab-btn" onclick="showTab('style')">🎨 Style</button>
+                </div>
+                <button id="downloadReportBtn" class="secondary-btn" title="Download Markdown report">⬇️ Download Report</button>
+            </div>
+
+            <div id="aggregate" class="tab-content active">
+                <div class="loading">🔄 Aggregating results across files...</div>
+            </div>
+
+            <div id="security" class="tab-content">
                 <div class="loading">🔄 Analyzing security issues...</div>
             </div>
 
