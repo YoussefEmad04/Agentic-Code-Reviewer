@@ -19,23 +19,31 @@ document.addEventListener('DOMContentLoaded', function() {
         showTab('security');
 
         try {
-            const formData = new FormData(form);
-
-            const response = await fetch('/analyze', {
-                method: 'POST',
-                body: formData
-            });
-
-            const data = await response.json();
-
-            if (data.status === 'error') {
-                showError(data.error);
-                hideResults();
-                return;
+            // If input looks like a GitHub repo URL, switch to repo analysis
+            const isGithub = /^https?:\/\/github\.com\//i.test(code);
+            if (isGithub) {
+                __lastRepoUrl = code;
+                const data = await analyzeRepoUrl(code);
+                if (data.status === 'error') {
+                    showError(data.error || 'Repository analysis failed');
+                    hideResults();
+                    return;
+                }
+                displayRepoResults(data);
+            } else {
+                const formData = new FormData(form);
+                const response = await fetch('/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+                if (data.status === 'error') {
+                    showError(data.error);
+                    hideResults();
+                    return;
+                }
+                displayResults(data);
             }
-
-            // Display the results
-            displayResults(data);
 
         } catch (error) {
             showError('Network error: ' + error.message);
@@ -43,6 +51,12 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 });
+
+// (removed duplicate download handler and stray code block)
+
+// Cache for current repository analysis results
+let __repoAnalysis = null;
+let __lastRepoUrl = null;
 
 function showResults() {
     document.getElementById('results').style.display = 'block';
@@ -60,7 +74,7 @@ function showError(message) {
     document.getElementById('results').style.display = 'none';
 }
 
-function showTab(tabName) {
+function showTab(tabName, evt) {
     // Hide all tabs
     const tabContents = document.querySelectorAll('.tab-content');
     tabContents.forEach(tab => tab.classList.remove('active'));
@@ -73,7 +87,9 @@ function showTab(tabName) {
     document.getElementById(tabName).classList.add('active');
 
     // Add active class to clicked button
-    event.target.classList.add('active');
+    if (evt && evt.target) {
+        evt.target.classList.add('active');
+    }
 }
 
 function displayResults(data) {
@@ -155,7 +171,180 @@ document.addEventListener('click', function(e) {
     if (e.target.classList.contains('tab-btn')) {
         const tabName = e.target.onclick.toString().match(/showTab\('(\w+)'\)/);
         if (tabName) {
-            showTab(tabName[1]);
+            showTab(tabName[1], e);
         }
     }
+});
+
+// ---- Repo analysis helpers ----
+async function analyzeRepoUrl(repoUrl) {
+    const response = await fetch('/analyze_repo', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_url: repoUrl })
+    });
+    return await response.json();
+}
+
+function displayRepoResults(data) {
+    const repoContainer = document.getElementById('repo-container');
+    const repoMeta = document.getElementById('repo-meta');
+    const repoTree = document.getElementById('repo-tree');
+    const repoExts = document.getElementById('repo-exts');
+    const repoFiles = document.getElementById('repo-files');
+    const repoFeedback = document.getElementById('repo-feedback');
+    if (!repoContainer) {
+        showError('UI not updated to display repository results.');
+        return;
+    }
+    repoContainer.style.display = 'block';
+
+    const analyzed = data.files_analyzed ?? 0;
+    const considered = data.files_considered ?? 0;
+    repoMeta.innerHTML = `
+        <div><strong>Repository:</strong> ${data.repository}</div>
+        <div><strong>Branch:</strong> ${data.branch}</div>
+        <div><strong>Subdirectory:</strong> ${data.subdirectory || '(root)'}</div>
+        <div><strong>Files analyzed:</strong> ${analyzed} / ${considered}</div>
+    `;
+
+    repoTree.textContent = data.structure_summary?.top_level_tree || '';
+
+    const exts = data.structure_summary?.extension_counts || {};
+    const extList = Object.entries(exts).slice(0, 20).map(([k, v]) => `${k}: ${v}`).join(' | ');
+    repoExts.textContent = extList;
+
+    // store for later selection
+    __repoAnalysis = data;
+    repoFiles.innerHTML = '';
+    (data.results || []).forEach((item, idx) => {
+        const li = document.createElement('li');
+        const status = (item.status || '').toUpperCase();
+        const err = item.error ? ` — ${item.error}` : '';
+        li.textContent = `${status}: ${item.path}${err}`;
+        li.dataset.idx = String(idx);
+        li.className = 'repo-file';
+        // Mark clickable only for reviewed items
+        if (item.status === 'reviewed' && item.result) {
+            li.classList.add('clickable');
+            li.title = 'Click to view analysis in tabs';
+        }
+        repoFiles.appendChild(li);
+    });
+
+    const firstReviewed = (data.results || []).find(r => r.status === 'reviewed' && r.result);
+    if (firstReviewed && firstReviewed.result) {
+        renderFileResult(firstReviewed);
+        repoFeedback.innerHTML = '';
+    } else {
+        ['security','maintainability','style'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<div class="issue"><p class="issue-description">No reviewed files to show.</p></div>';
+        });
+        repoFeedback.innerHTML = '<em>No reviewed files available. Check filters or increase max files.</em>';
+    }
+
+    // Render aggregate
+    renderAggregate(data);
+}
+
+// Click handling for selecting a file to display
+document.addEventListener('click', function(e) {
+    const li = e.target.closest && e.target.closest('li.repo-file');
+    if (!li) return;
+    const idx = Number(li.dataset.idx || '-1');
+    if (!__repoAnalysis || !Array.isArray(__repoAnalysis.results)) return;
+    const item = __repoAnalysis.results[idx];
+    if (item && item.status === 'reviewed' && item.result) {
+        renderFileResult(item);
+    }
+});
+
+function renderFileResult(item) {
+    // Update tabs with this file's analysis
+    displayResults(item.result);
+    const repoFeedback = document.getElementById('repo-feedback');
+    if (repoFeedback) {
+        repoFeedback.innerHTML = `<strong>Showing:</strong> ${item.path}`;
+    }
+    // Ensure a tab is active
+    showTab('security');
+}
+
+function renderAggregate(data) {
+    const container = document.getElementById('aggregate');
+    if (!container) return;
+    const reviewed = (data.results || []).filter(r => r.status === 'reviewed' && r.result);
+    if (reviewed.length === 0) {
+        container.innerHTML = '<div class="issue"><p class="issue-description">No reviewed files to aggregate.</p></div>';
+        return;
+    }
+    const rows = reviewed.map((r, idx) => {
+        const ar = (r.result && r.result.analysis_results) || {};
+        const c = (cat) => ((ar[cat] && Array.isArray(ar[cat].issues)) ? ar[cat].issues.length : 0);
+        const sec = c('security');
+        const main = c('maintainability');
+        const sty = c('style');
+        return `
+        <tr>
+            <td>${r.path}</td>
+            <td>${sec}</td>
+            <td>${main}</td>
+            <td>${sty}</td>
+            <td><button class="mini-btn" data-view-idx="${idx}">View</button></td>
+        </tr>`;
+    }).join('');
+    container.innerHTML = `
+        <div class="aggregate-table-wrapper">
+            <table class="aggregate-table">
+                <thead>
+                    <tr><th>File</th><th>Security</th><th>Maintainability</th><th>Style</th><th></th></tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>`;
+    // Wire up view buttons
+    container.querySelectorAll('button[data-view-idx]').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const idx = Number(btn.getAttribute('data-view-idx'));
+            const reviewed = (data.results || []).filter(r => r.status === 'reviewed' && r.result);
+            const item = reviewed[idx];
+            if (item) renderFileResult(item);
+        });
+    });
+}
+
+// Download report button handler (top-level)
+document.addEventListener('DOMContentLoaded', function() {
+    const btn = document.getElementById('downloadReportBtn');
+    if (!btn) return;
+    btn.addEventListener('click', async function() {
+        if (!__lastRepoUrl) {
+            showError('No repository URL detected. Paste a GitHub repo URL and analyze first.');
+            return;
+        }
+        try {
+            const resp = await fetch('/analyze_repo_report', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ repo_url: __lastRepoUrl })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                showError(err.error || ('Failed to download report: ' + resp.status));
+                return;
+            }
+            const blob = await resp.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'code_review_report.md';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (e) {
+            showError('Network error while downloading report: ' + e.message);
+        }
+    });
 });

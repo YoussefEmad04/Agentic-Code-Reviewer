@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     openrouter_api_key: str | None = Field(None, description="OpenRouter API key (alternative)")
     openai_model: str = Field("mistralai/mistral-7b-instruct", description="Model ID (OpenRouter model id by default)")
     openai_base_url: str = Field("https://openrouter.ai/api/v1", description="Base URL for OpenAI-compatible API (OpenRouter by default)")
+    temperature: float = Field(0.2, description="LLM sampling temperature")
+    request_timeout_s: int = Field(60, description="Timeout in seconds for LLM requests")
+    max_retries: int = Field(2, description="Maximum number of retries for LLM calls")
+    retry_backoff_s: float = Field(0.5, description="Base backoff seconds between retries")
     
     # Application Settings
     max_file_size_mb: int = Field(10, description="Maximum file size in MB")
@@ -43,6 +47,9 @@ class Settings(BaseSettings):
         default_factory=lambda: ["python", "javascript", "typescript", "java", "go"],
         description="List of supported programming languages"
     )
+    # Repository analysis defaults
+    repo_allowed_extensions: List[str] = Field(default_factory=lambda: [".py", ".ipynb"], description="File extensions to include when scanning repositories")
+    max_files_per_repo: int = Field(20, description="Maximum number of files to analyze per repository")
     
     # Analysis Configuration
     analyses: Dict[str, AnalysisConfig] = Field(
